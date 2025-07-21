@@ -183,7 +183,7 @@ mvn exec:java -pl billing-system -Dexec.mainClass="com.divesurf.BillingSystem.Bi
 mvn exec:java -pl inventory-system -Dexec.mainClass="com.divesurf.InventorySystem.InventorySystem"
 
 # Result System
-mvn exec:java -pl result-system -Dexec.mainClass="com.divesurf.result.ResultSystem"
+mvn exec:java -pl result-system -Dexec.mainClass="com.divesurf.results.ResultSystem"
 ```
 
 ---
