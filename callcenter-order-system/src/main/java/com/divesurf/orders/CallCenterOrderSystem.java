@@ -33,7 +33,7 @@ public class CallCenterOrderSystem {
                 //Write orders to file every 2 minutes
                 from("direct:collect-orders")
                     .aggregate(constant(true), new GroupedBodyAggregationStrategy())
-                    .completionInterval(120000)
+                    .completionInterval(1200) //was 120000 for 2 minutes, changed for testing
                     .log("Writing ${body.size()} orders to file")
                     .process(exchange -> {
                         @SuppressWarnings("unchecked")
