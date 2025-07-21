@@ -22,7 +22,8 @@ public class BillingSystem {
         context.addRoutes(new RouteBuilder() {
             @Override
             public void configure() {
-                from("jms:topic:ordersForProcessing?clientId=billing&durableSubscriptionName=billing") // pub sub
+                // Publish-Subscribe Channel: Consumes orders from topic
+                from("jms:topic:ordersForProcessing?clientId=billing&durableSubscriptionName=billing")
                     .process(new CreditValidator());
         
             }
@@ -91,12 +92,12 @@ public class BillingSystem {
                 creditScore
             );
 
-            // Send basic order (no credit score) to inventory queue for stock validation
+            // Point-to-Point Channel: Send basic order (no credit score) to inventory queue for stock validation
             exchange.getContext().createProducerTemplate().sendBody("jms:queue:billingToInventory", basicOrder.toCsv());
 
-            // Send enriched order (with credit score) to results topic for aggregation
+            // Publish-Subscribe Channel: Send enriched order (with credit score) to results topic for aggregation
             exchange.getContext().createProducerTemplate().sendBody("jms:topic:billingResults", enriched.toCsv());
-            // The route will handle sending to largeOrders/smallOrders and to inventory
+            // (Content-Based Router and Aggregator patterns are typically implemented in downstream systems)
             System.out.println("Billing validation: " + orderID +
                 " - " + (isValid ? "APPROVED" : "REJECTED") + " | CreditScore: " + creditScore + " (" + validationResult + ")");
         }

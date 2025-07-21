@@ -20,21 +20,23 @@ public class CallCenterOrderSystem {
         ConnectionFactory connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616");
         context.addComponent("jms", JmsComponent.jmsComponentAutoAcknowledge(connectionFactory));
 
-        //Implement Channel Adapter
+        // Channel Adapter: Integrates external CLI input into Camel routes
         context.addRoutes(new RouteBuilder() {
             @Override
             public void configure() {
+                // Point-to-Point Channel: Sending orders to a JMS queue (orders)
                 from("direct:cli-orders")
                     .routeId("bufferedOrderRoute")
                     .log("Received order: ${body}")
                     .multicast().parallelProcessing()
                         .to("jms:queue:orders", "direct:collect-orders");
 
-                //Write orders to file every 2 minutes
+                // Aggregator pattern: Collects orders for 2 minutes before writing to file
                 from("direct:collect-orders")
                     .aggregate(constant(true), new GroupedBodyAggregationStrategy())
                     .completionInterval(120000) //2 minutes
                     .log("Writing ${body.size()} orders to file")
+                    // Message Translator: Converts list of orders to string for file output
                     .process(exchange -> {
                         @SuppressWarnings("unchecked")
                         java.util.List<String> orders = (java.util.List<String>) exchange.getIn().getBody();
@@ -70,6 +72,7 @@ public class CallCenterOrderSystem {
                 int divingSuits = Integer.parseInt(parts[2].trim());
                 int customerId = Integer.parseInt(parts[3].trim());
 
+                // Message Translator: Formats CLI input into a CSV order line
                 String orderLine = String.format("%s,%d,%d,%d", fullName, surfboards, divingSuits, customerId);
                 template.sendBody("direct:cli-orders", orderLine);
             } catch (Exception e) {

@@ -27,7 +27,7 @@ public class ResultSystem {
             @Override
             public void configure() {
 
-                /* ---------- Aggregator Pattern: Collect billing + inventory results ---------- */
+                // Publish-Subscribe Channel: Receives billing results from topic
                 from("jms:topic:billingResults?clientId=resultBilling&durableSubscriptionName=resultBilling")
                     .process(e -> {
                         String[] parts = e.getIn().getBody(String.class).split(",");
@@ -40,7 +40,7 @@ public class ResultSystem {
                     })
                     .to("jms:queue:aggregationInput");
                     
-                // Listen to large orders for inventory results
+                // Point-to-Point Channel: Receives large orders from inventory
                 from("jms:queue:largeOrders")
                     .process(e -> {
                         String[] parts = e.getIn().getBody(String.class).split(",");
@@ -50,7 +50,7 @@ public class ResultSystem {
                     })
                     .to("jms:queue:aggregationInput");
                     
-                // Listen to small orders for inventory results
+                // Point-to-Point Channel: Receives small orders from inventory
                 from("jms:queue:smallOrders")
                     .process(e -> {
                         String[] parts = e.getIn().getBody(String.class).split(",");
@@ -60,7 +60,8 @@ public class ResultSystem {
                     })
                     .to("jms:queue:aggregationInput");
 
-                /* ---------- Aggregation and Content‑Based Routing ---------- */
+                // Aggregator: Combines billing and inventory results for the same orderId
+                // Content-Based Router: Routes aggregated orders by order size
                 from("jms:queue:aggregationInput")
                     .aggregate(header("orderId"), (oldEx, newEx) -> {
                         // Handle first message case

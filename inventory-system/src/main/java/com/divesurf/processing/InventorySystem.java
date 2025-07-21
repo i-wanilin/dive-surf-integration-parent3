@@ -48,15 +48,15 @@ public class InventorySystem {
         context.addRoutes(new RouteBuilder() {
             @Override
             public void configure() {
-                // Inventory subscribes to enriched orders from billing system
+                // Point-to-Point Channel: Receives validated orders from billing system via queue
                 from("jms:queue:billingToInventory")
                     .process(new StockValidator(stockManager))
-                    // Content-Based Router: route to large/small based on quantity
+                    // Content-Based Router: Routes to largeOrders or smallOrders based on overallItems
                     .choice()
                         .when(header("overallItems").isGreaterThan(10))
-                            .to("jms:queue:largeOrders")
+                            .to("jms:queue:largeOrders") // Point-to-Point Channel
                         .otherwise()
-                            .to("jms:queue:smallOrders")
+                            .to("jms:queue:smallOrders") // Point-to-Point Channel
                     .end();
             }
         });

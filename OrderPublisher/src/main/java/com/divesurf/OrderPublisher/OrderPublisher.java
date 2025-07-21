@@ -27,18 +27,20 @@ public class OrderPublisher {
         ConnectionFactory connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616");
         context.addComponent("jms", JmsComponent.jmsComponentAutoAcknowledge(connectionFactory));
 
-        //Implement Route from Order taking systems to message translator to content enricher to publisher
+        // Route: Consumes orders from queue, translates and enriches them, then publishes to topic
         context.addRoutes(new RouteBuilder() {
             @Override
             public void configure() {
                 from("jms:queue:orders")
-                .routeId("order-processing-route")
-                .log("Received raw order: ${body}")
-                .process(new MessageTranslator())
-                .log("Translated order: ${body}")
-                .process(new OrderEnricher())
-                .log("Enriched order: ${body}")
-                .to("jms:topic:ordersForProcessing");
+                    .routeId("order-processing-route")
+                    .log("Received raw order: ${body}")
+                    // Message Translator: Unifies order format from different sources
+                    .process(new MessageTranslator())
+                    .log("Translated order: ${body}")
+                    // Content Enricher: Adds orderId, overallItems, validation, etc.
+                    .process(new OrderEnricher())
+                    .log("Enriched order: ${body}")
+                    .to("jms:topic:ordersForProcessing");
             }
         });
 
@@ -60,7 +62,7 @@ public class OrderPublisher {
 
 
 
-    //Implementation of Message Translator to take WebOrders and Callcenter Orders and translate into unified format
+    // Message Translator: Takes WebOrders and Callcenter Orders and translates into unified format
     static class MessageTranslator implements Processor {
         @Override
         public void process(Exchange exchange) {
@@ -93,7 +95,7 @@ public class OrderPublisher {
         }
     }
 
-    //Content Enricher to add OrderID, OverallItems, valid flag, validationResult
+    // Content Enricher: Adds OrderID, OverallItems, valid flag, validationResult
     static class OrderEnricher implements Processor {
         @Override
         public void process(Exchange exchange) {

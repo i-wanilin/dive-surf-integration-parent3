@@ -21,14 +21,15 @@ public class WebOrderSystem {
         ConnectionFactory connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616");
         context.addComponent("jms", JmsComponent.jmsComponentAutoAcknowledge(connectionFactory));
 
-        //Implement Message Endpoint
+        // Message Endpoint: Receives orders from the web (simulated by CLI input)
         context.addRoutes(new RouteBuilder() {
             @Override
             public void configure() {
-                //Route: from direct:start (input endpoint) to JMS queue (output endpoint)
+                // Point-to-Point Channel: Sending orders to a JMS queue (orders)
                 from("direct:start")
                     .routeId("webOrderRoute")
                     .log("Received raw order: ${body}")
+                    // Message Translator: Transforms web order input to canonical order format
                     .process(new WebOrderProcessor())
                     .to("jms:queue:orders")
                     .log("Sent to JMS queue: ${body}");
@@ -55,6 +56,7 @@ public class WebOrderSystem {
         context.stop();
     }
 
+    // Message Translator: Converts web order input to canonical order format
     static class WebOrderProcessor implements Processor {
         @Override
         public void process(Exchange exchange) throws Exception {
