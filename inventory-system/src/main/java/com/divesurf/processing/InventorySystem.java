@@ -7,7 +7,7 @@ import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.component.jms.JmsComponent;
 import org.apache.camel.impl.DefaultCamelContext;
 import org.apache.activemq.ActiveMQConnectionFactory;
-import com.divesurf.common.Order;
+//import com.divesurf.common.Order;
 
 import javax.jms.ConnectionFactory;
 import java.io.File;
@@ -19,13 +19,18 @@ public class InventorySystem {
 
     public static void main(String[] args) throws Exception {
         Properties stockProps = new Properties();
-        File stockFile = new File("stock.properties");
+        // Ensure we create/read stock.properties in the inventory-system module folder
+        String baseDir = System.getProperty("user.dir");
+        File stockFile = new File(baseDir + File.separator + "inventory-system" + File.separator + "stock.properties");
 
         if (!stockFile.exists()) {
             stockProps.setProperty("surfboards", "100");
             stockProps.setProperty("divingSuits", "50");
             try (FileOutputStream out = new FileOutputStream(stockFile)) {
-                stockProps.store(out, "Inventory Stock");
+                String header = "Inventory Stock\n"
+                        + "Important notice: you may need to close and open the file if you've made some orders if you want to see this file changed\n"
+                        + "if you change the file manually, you may want to also save it CTRL+S";
+                stockProps.store(out, header);
             }
         }
 
@@ -43,16 +48,24 @@ public class InventorySystem {
         context.addRoutes(new RouteBuilder() {
             @Override
             public void configure() {
-                // Inventory subscribes to the ordersForProcessing topic, validates, enriches, updates stock, and routes to big/small queues and inventoryEnrichedOrders
-                from("jms:topic:ordersForProcessing?clientId=inventory&durableSubscriptionName=inventory")
-                    .process(new StockValidator(stockManager));
+                // Inventory subscribes to enriched orders from billing system
+                from("jms:queue:billingToInventory")
+                    .process(new StockValidator(stockManager))
+                    // Content-Based Router: route to large/small based on quantity
+                    .choice()
+                        .when(header("overallItems").isGreaterThan(10))
+                            .to("jms:queue:largeOrders")
+                        .otherwise()
+                            .to("jms:queue:smallOrders")
+                    .end();
             }
         });
 
         context.start();
         System.out.println("InventorySystem started");
-        System.out.println("Initial stock - Surfboards: " + stockManager.getSurfboardStock() +
-                          ", Diving Suits: " + stockManager.getDivingSuitStock());
+        // Display suits first, then surfboards
+        System.out.println("Initial stock - Diving Suits: " + stockManager.getDivingSuitStock() +
+                          ", Surfboards: " + stockManager.getSurfboardStock());
         Thread.sleep(Long.MAX_VALUE);
     }
 
@@ -78,7 +91,10 @@ public class InventorySystem {
             stockProps.setProperty("surfboards", String.valueOf(surfboards));
             stockProps.setProperty("divingSuits", String.valueOf(divingSuits));
             try (FileOutputStream out = new FileOutputStream(stockFile)) {
-                stockProps.store(out, "Inventory Stock");
+                String header = "Inventory Stock\n"
+                        + "Important notice: you may need to close and open the file if you've made some orders if you want to see this file changed\n"
+                        + "if you change the file manually, you may want to also save it CTRL+S";
+                stockProps.store(out, header);
             } catch (Exception e) {
                 System.err.println("Failed to update stock.properties: " + e.getMessage());
             }
@@ -95,86 +111,105 @@ public class InventorySystem {
         @Override
         public void process(Exchange exchange) throws Exception {
             String message = exchange.getIn().getBody(String.class);
-            String[] parts = message.split(",", 9);
-            if (parts.length < 9) {
-                throw new IllegalArgumentException("Invalid message format: " + message);
-            }
-            Order order = new Order();
-            order.setCustomerID(parts[0].trim());
-            order.setFirstName(parts[1].trim());
-            order.setLastName(parts[2].trim());
-            order.setOverallItems(parts[3].trim());
-            order.setNumberOfDivingSuits(parts[4].trim());
-            order.setNumberOfSurfboards(parts[5].trim());
-            order.setOrderID(parts[6].trim());
-            order.setValid(parts[7].trim());
-            order.setValidationResult(parts.length > 8 ? parts[8].trim() : "");
-            int surfboards = 0;
-            int divingSuits = 0;
+            // Split incoming full enriched CSV
+            String[] parts = message.split(",", -1);
+            String customerID = parts[0].trim();
+            String firstName = parts[1].trim();
+            String lastName = parts[2].trim();
+            String overallItemsStr = parts[3].trim();
+            String divingSuitsStr = parts[4].trim();
+            String surfboardsStr = parts[5].trim();
+            String orderID = parts[6].trim();
+            String validStr = parts[7].trim();
+            String validationResultStr = parts.length > 8 ? parts[8].trim() : "";
+            // Parse quantities from enriched CSV: parts[5]=surfboards, parts[4]=divingSuits
+            int surfboards;
+            int divingSuits;
             try {
-                surfboards = Integer.parseInt(order.getNumberOfSurfboards());
-                divingSuits = Integer.parseInt(order.getNumberOfDivingSuits());
+                divingSuits = Integer.parseInt(parts[4].trim());
+                surfboards = Integer.parseInt(parts[5].trim());
             } catch (NumberFormatException e) {
-                order.setValid("false");
-                order.setValidationResult("Invalid quantity format");
-                exchange.getIn().setBody(order.toString());
+                String errorCsv = String.join(",",
+                    customerID,
+                    firstName,
+                    lastName,
+                    overallItemsStr,
+                    divingSuitsStr,
+                    surfboardsStr,
+                    orderID,
+                    "false",
+                    "Invalid quantity format",
+                    String.valueOf(stockManager.getSurfboardStock()),
+                    String.valueOf(stockManager.getDivingSuitStock()),
+                    String.valueOf(stockManager.getSurfboardStock() + stockManager.getDivingSuitStock())
+                );
+                exchange.getIn().setBody(errorCsv);
                 exchange.getIn().setHeader("validationType", "inventory");
                 System.out.println("Inventory validation error: Invalid quantities");
                 return;
             }
-            boolean isValid = true;
-            StringBuilder validationResult = new StringBuilder();
+            boolean isBillingValid = Boolean.parseBoolean(validStr);
             int currentSurfboards = stockManager.getSurfboardStock();
             int currentDivingSuits = stockManager.getDivingSuitStock();
             int currentTotalStock = currentSurfboards + currentDivingSuits;
-            if (surfboards > currentSurfboards) {
-                isValid = false;
-                validationResult.append("Insufficient surfboards. ");
-            }
-            if (divingSuits > currentDivingSuits) {
-                isValid = false;
-                validationResult.append("Insufficient diving suits. ");
-            }
-            // If valid, update the stock and save to file
-            if (isValid) {
-                stockManager.updateStock(currentSurfboards - surfboards, currentDivingSuits - divingSuits);
-            } else {
-                order.setValid("false");
-                if (!order.getValidationResult().isEmpty()) {
-                    order.setValidationResult(order.getValidationResult() + " | ");
-                }
-                order.setValidationResult(order.getValidationResult() + validationResult.toString());
-            }
-            int overallItems = Integer.parseInt(order.getOverallItems());
+            int overallItems = Integer.parseInt(overallItemsStr);
             exchange.getIn().setHeader("overallItems", overallItems);
             exchange.getIn().setHeader("validationType", "inventory");
-            // Enrich with current stock
+
+            /* ---------- evaluate stock regardless of billing result ---------- */
+            boolean stockOk = surfboards <= currentSurfboards
+                           && divingSuits <= currentDivingSuits;
+            String stockMsg = stockOk ? "Stock sufficient"
+                                      : "Insufficient stock";
+
+            /* overall validity = billing OK **and** stock OK */
+            boolean finalValid = isBillingValid && stockOk;
+
+            String combinedValidation = stockMsg;
+
+            if (stockOk && isBillingValid) {
+                // update physical stock only when order will ship
+                int newSurfboards = currentSurfboards - surfboards;
+                int newDivingSuits = currentDivingSuits - divingSuits;
+                stockManager.updateStock(newSurfboards, newDivingSuits);
+                currentSurfboards = newSurfboards;
+                currentDivingSuits = newDivingSuits;
+                currentTotalStock = newSurfboards + newDivingSuits;
+            }
+
             EnrichedByInventorySystemOrder enriched = new EnrichedByInventorySystemOrder(
-                order.getCustomerID(),
-                order.getFirstName(),
-                order.getLastName(),
-                order.getOverallItems(),
-                order.getNumberOfDivingSuits(),
-                order.getNumberOfSurfboards(),
-                order.getOrderID(),
-                isValid,
-                order.getValidationResult(),
+                customerID.isEmpty() ? "-" : customerID,
+                firstName.isEmpty()  ? "-" : firstName,
+                lastName.isEmpty()   ? "-" : lastName,
+                overallItemsStr,
+                divingSuitsStr,
+                surfboardsStr,
+                orderID,
+                finalValid,
+                combinedValidation,
                 currentSurfboards,
                 currentDivingSuits,
                 currentTotalStock
             );
-            // Send enriched order to largeOrders or smallOrders queue
-            String enrichedCsv = enriched.toCsv();
-            if (overallItems > 10) {
-                exchange.getContext().createProducerTemplate().sendBody("jms:queue:largeOrders", enrichedCsv);
+
+            exchange.getIn().setBody(enriched.toCsv());
+            exchange.getIn().setHeader("overallItems", overallItems);
+
+            // Print updated stock counts and recalculate total after any update
+            // Display suits first, then surfboards in validation log
+            String status;
+            if (!isBillingValid) {
+                status = "BILLING REJECTED";
+            } else if (finalValid) {
+                status = "IN STOCK";
             } else {
-                exchange.getContext().createProducerTemplate().sendBody("jms:queue:smallOrders", enrichedCsv);
+                status = "OUT OF STOCK";
             }
-            System.out.println("Inventory validation: " + order.getOrderID() +
-                    " - " + (isValid ? "IN STOCK" : "OUT OF STOCK") +
-                    " | Surfboards: " + stockManager.getSurfboardStock() +
+            System.out.println("Inventory validation: " + orderID +
+                    " - " + status +
                     " | Suits: " + stockManager.getDivingSuitStock() +
-                    " | CurrentTotalStock: " + currentTotalStock);
+                    " | Surfboards: " + stockManager.getSurfboardStock() +
+                    " | CurrentTotalStock: " + (stockManager.getSurfboardStock() + stockManager.getDivingSuitStock()));
         }
     }
 

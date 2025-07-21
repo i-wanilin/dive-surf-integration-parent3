@@ -7,7 +7,7 @@ import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.component.jms.JmsComponent;
 import org.apache.camel.impl.DefaultCamelContext;
 import org.apache.activemq.ActiveMQConnectionFactory;
-import com.divesurf.common.Order;
+//import com.divesurf.common.Order;
 
 import javax.jms.ConnectionFactory;
 import java.util.stream.Collectors;
@@ -22,15 +22,9 @@ public class BillingSystem {
         context.addRoutes(new RouteBuilder() {
             @Override
             public void configure() {
-                from("jms:topic:ordersForProcessing?clientId=billing&durableSubscriptionName=billing")
-                    .process(new CreditValidator())
-                    .choice()
-                        .when(header("overallItems").isGreaterThan(10))
-                            .to("jms:queue:largeOrders")
-                        .otherwise()
-                            .to("jms:queue:smallOrders")
-                    .end()
-                    .to("jms:queue:billingToInventory");
+                from("jms:topic:ordersForProcessing?clientId=billing&durableSubscriptionName=billing") // pub sub
+                    .process(new CreditValidator());
+        
             }
         });
 
@@ -50,47 +44,61 @@ public class BillingSystem {
             for (int i = 0; i < parts.length; i++) {
                 parts[i] = parts[i].trim();
             }
-            Order order = new Order();
-            order.setCustomerID(parts[0]);
-            order.setFirstName(parts[1]);
-            order.setLastName(parts[2]);
-            order.setOverallItems(parts[3]);
-            order.setNumberOfDivingSuits(parts[4]);
-            order.setNumberOfSurfboards(parts[5]);
-            order.setOrderID(parts[6]);
-            String digitString = order.getCustomerID().chars()
+            String customerID = parts[0];
+            String firstName = parts[1];
+            String lastName = parts[2];
+            String overallItemsStr = parts[3];
+            String divingSuits = parts[4];
+            String surfboards = parts[5];
+            String orderID = parts[6];
+            String digitString = customerID.chars()
                 .filter(Character::isDigit)
                 .mapToObj(c -> String.valueOf((char) c))
                 .collect(Collectors.joining());
             int digitSum = digitString.chars()
                 .map(Character::getNumericValue)
                 .sum();
-            int threshold = 3;
-            boolean isValid = (digitSum % 10) >= threshold;
-            order.setValid(String.valueOf(isValid));
-            if (!isValid) {
-                order.setValidationResult("Credit check failed");
-            }
-            int overallItems = Integer.parseInt(order.getOverallItems());
+            int creditScore = (digitSum % 10) + 1; // 1 to 10
+            boolean isValid = creditScore >= 5; // 5-10 is good
+            String validationResult = isValid ? "Credit score is good" : "Credit score too low";
+            int overallItems = Integer.parseInt(overallItemsStr);
             exchange.getIn().setHeader("overallItems", overallItems);
-            // Enrich with creditScore and send to new queue
-            EnrichedByBillingSystemOrder enriched = new EnrichedByBillingSystemOrder(
-                order.getCustomerID(),
-                order.getFirstName(),
-                order.getLastName(),
-                order.getOverallItems(),
-                order.getNumberOfDivingSuits(),
-                order.getNumberOfSurfboards(),
-                order.getOrderID(),
+
+            // Create basic order for inventory (no credit score)
+            BasicValidatedOrder basicOrder = new BasicValidatedOrder(
+                customerID,
+                firstName,
+                lastName,
+                overallItemsStr,
+                divingSuits,
+                surfboards,
+                orderID,
                 isValid,
-                order.getValidationResult(),
-                digitSum // creditScore
+                validationResult
             );
-            exchange.getIn().setBody(enriched.toCsv());
-            exchange.getIn().setHeader("validationType", "billing");
+
+            // Create enriched order for results (with credit score)
+            EnrichedByBillingSystemOrder enriched = new EnrichedByBillingSystemOrder(
+                customerID,
+                firstName,
+                lastName,
+                overallItemsStr,
+                divingSuits,
+                surfboards,
+                orderID,
+                isValid,
+                validationResult,
+                creditScore
+            );
+
+            // Send basic order (no credit score) to inventory queue for stock validation
+            exchange.getContext().createProducerTemplate().sendBody("jms:queue:billingToInventory", basicOrder.toCsv());
+
+            // Send enriched order (with credit score) to results topic for aggregation
+            exchange.getContext().createProducerTemplate().sendBody("jms:topic:billingResults", enriched.toCsv());
             // The route will handle sending to largeOrders/smallOrders and to inventory
-            System.out.println("Billing validation: " + order.getOrderID() +
-                " - " + (isValid ? "APPROVED" : "REJECTED") + " | CreditScore: " + digitSum);
+            System.out.println("Billing validation: " + orderID +
+                " - " + (isValid ? "APPROVED" : "REJECTED") + " | CreditScore: " + creditScore + " (" + validationResult + ")");
         }
     }
 
@@ -134,4 +142,43 @@ public class BillingSystem {
             );
         }
     }
+
+    // Basic validated order without credit score (for inventory)
+    public static class BasicValidatedOrder {
+        private final String customerId;
+        private final String firstName;
+        private final String lastName;
+        private final String overallItems;
+        private final String divingSuits;
+        private final String surfboards;
+        private final String orderId;
+        private final boolean valid;
+        private final String validationResult;
+
+        public BasicValidatedOrder(String customerId, String firstName, String lastName, String overallItems, String divingSuits, String surfboards, String orderId, boolean valid, String validationResult) {
+            this.customerId = customerId;
+            this.firstName = firstName;
+            this.lastName = lastName;
+            this.overallItems = overallItems;
+            this.divingSuits = divingSuits;
+            this.surfboards = surfboards;
+            this.orderId = orderId;
+            this.valid = valid;
+            this.validationResult = validationResult;
+        }
+        
+        public String toCsv() {
+            return String.join(",",
+                customerId,
+                firstName,
+                lastName,
+                overallItems,
+                divingSuits,
+                surfboards,
+                orderId,
+                String.valueOf(valid),
+                validationResult
+            );
+        }
     }
+}

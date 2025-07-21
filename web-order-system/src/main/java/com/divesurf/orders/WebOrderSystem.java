@@ -1,4 +1,4 @@
-package com.divesurf.WebOrderSystem;
+package com.divesurf.WebOrderSystem;  // was com.divesurf.orders, won't run on my machine, changed to com.divesurf.WebOrderSystem
 
 import org.apache.camel.CamelContext;
 import org.apache.camel.ProducerTemplate;
