@@ -1,0 +1,6 @@
+com/divesurf/OrderPublisher/OrderPublisher.class
+com/divesurf/OrderPublisher/OrderPublisher$EnrichedOrder.class
+com/divesurf/OrderPublisher/OrderPublisher$UnifiedOrder.class
+com/divesurf/OrderPublisher/OrderPublisher$1.class
+com/divesurf/OrderPublisher/OrderPublisher$MessageTranslator.class
+com/divesurf/OrderPublisher/OrderPublisher$OrderEnricher.class
